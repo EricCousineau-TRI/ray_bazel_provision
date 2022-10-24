@@ -1,0 +1,130 @@
+# This is just a template. Make a copy of your own and modify corresponding
+# fields in `<...>`.
+#
+# See  https://docs.ray.io/en/releases-1.9.2/cluster/config.html for details.
+#
+# Link to full configuration with comments:
+# https://docs.ray.io/en/releases-1.9.2/cluster/config.html#full-configuration
+
+# Replace stuff inside of <...> as needed.
+
+cluster_name: `<your_name-wandb_project-cluster_id>`
+
+max_workers: &max_workers 4
+
+upscaling_speed: 1.0
+
+idle_timeout_minutes: 30
+
+provider:
+    type: aws
+    # Replace <REGION> with your region.
+    region: <REGION>-1
+    availability_zone: <REGION>-1a,<REGION>-1b,<REGION>-1c,<REGION>-1d,<REGION>-1e,<REGION>-1f
+    cache_stopped_nodes: True
+    # Undocumented, but you can't use private subnets without it.
+    use_internal_ips: True
+auth:
+    ssh_user: ubuntu
+    # Don't use ray's auto-generated key pairs. You won't be able to login to
+    # your instances if your teammate auto-generated a different key pair with
+    # the same name.
+    ssh_private_key: ~/.ssh/my-key.pem
+
+available_node_types:
+    ray.head.default:
+        min_workers: 0
+        max_workers: 0
+
+        # Use a subset (75%) of the head node's resources.
+        # Be sure to change this according to your InstanceType!
+        # N.B. This isn't exactly what is mentioned in the docs
+        # (https://docs.ray.io/en/releases-1.9.2/cluster/guide.html#configuring),
+        # but seems to work well enough.
+        resources: {"CPU": 24, "GPU": 3}
+
+        node_config: &head_node_config
+
+            # Select the instance type that is most appropriate for your setup.
+            # InstanceType: p3.8xlarge
+            # InstanceType: p3.16xlarge
+            # InstanceType: g3.16xlarge
+            # InstanceType: g4dn.metal
+            InstanceType: g5.12xlarge
+
+            ImageId: <FILL>
+            BlockDeviceMappings:
+                - DeviceName: /dev/sda1
+                  Ebs:
+                      VolumeSize: 100
+            SecurityGroupIds:
+                - <FILL>  # ray-distributed-launch
+                - <FILL>  # For EFS
+
+            # N.B. We expose all subnets so we can rotate among availability
+            # zones shown above. It seems like ray will select the VPC matching
+            # the availability zone / security group?
+            # For relevant code, see:
+            # https://github.com/ray-project/ray/blob/ray-1.9.2/python/ray/autoscaler/_private/aws/config.py#L416-L488
+            SubnetIds:
+                - "subnet-<FILL>"  # <REGION>-1a
+                - "subnet-<FILL>"  # <REGION>-1b
+                ...
+
+            IamInstanceProfile:
+                Arn: <FILL>
+            KeyName: my-key
+
+    ray.worker.default:
+        min_workers: 1
+        resources: {}
+        node_config: *head_node_config
+
+head_node_type: ray.head.default
+
+file_mounts: {
+    "/home/ubuntu/.aws": "~/.aws",
+    "/home/ubuntu/.netrc": "~/.netrc",  # Wandb user authentication
+    "/home/ubuntu/my_code": `<PATH_TO_YOUR_CODE_DIR>`,  # Sync up source code
+}
+
+file_mounts_sync_continuously: False
+
+# We exclude bazel-* here to avoid syncing large files and/or malformed
+# symlinks. See `setup_commands` for more information.
+rsync_exclude:
+    - "**/.git"
+    - "**/.git/**"
+    - "**/my_code/bazel-*"
+    - "**/my_code/bazel-*/**"
+
+rsync_filter:
+    - ".gitignore"
+
+# If you're close to tip of code, avoid using `bazel build` here (it can be
+# slow if not needed) -- assuming your files sync'd via `file_mounts` and the
+# build from the AMI / cached instances play nicely.
+# TODO(eric.cousineau): How to make `bazel build` faster on startup?
+setup_commands:
+  # Read script for flags.
+  - ~/my_code/ray_cluster_node_setup.sh
+# NOTE: If you are changing BUILD files on top of the AMI build and your ray
+# jobs are *pure Python* (e.g. you can't explicitly pass `./run --build ''` to
+# worker as part of your job), then you should explicitly build them on head and
+# worker nodes.
+#  - cd ~/my_code && bazel build //...
+
+# N.B. We explicitly clear out the setup commands for head/workers.
+# See https://github.com/ray-project/ray/issues/22649.
+head_setup_commands: []
+worker_setup_commands: []
+
+# `ray` is a convenience wrapper that still uses my_code. It is introduced by
+# `ray_cluster_node_setup.sh`.
+head_start_ray_commands:
+  - ray stop
+  - ulimit -n 65536; ray start --head --port=6379 --object-manager-port=8076 --autoscaling-config=~/ray_bootstrap_config.yaml
+
+worker_start_ray_commands:
+  - ray stop
+  - ulimit -n 65536; ray start --address=${RAY_HEAD_IP}:6379 --object-manager-port=8076

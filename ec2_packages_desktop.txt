@@ -1,0 +1,13 @@
+# Packages for running desktop remotely.
+# Derived from:
+# https://ubuntu.com/tutorials/ubuntu-desktop-aws#2-setting-up-tightvnc-on-aws
+# N.B. This is not a minimal list.
+gnome-panel
+gnome-settings-daemon
+gnome-terminal
+mesa-utils
+metacity
+nautilus
+ubuntu-desktop
+x11vnc  # For actual server.
+xserver-xorg-core
